@@ -33,7 +33,7 @@ pip install -r requirements.txt
 
 *Step 3: Run the Program*
 ```bash  
-python main.py  
+python directory_manager.py  
 ```  
 
 ---
