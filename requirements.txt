@@ -1,0 +1,6 @@
+tkinter  
+hashlib  
+os  
+shutil  
+Pillow  
+python-magic
