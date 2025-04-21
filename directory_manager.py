@@ -3,63 +3,60 @@ import shutil
 import hashlib
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
-import subprocess
 import sys
 import threading
-from PIL import Image
 import magic
-from typing import List, Dict, Tuple, Optional
-
-
-def install_dependencies():
-    """Install required packages only if they're not already installed"""
-    required_packages = {
-        'python-magic': 'python-magic-bin' if sys.platform == 'win32' else 'python-magic',
-        'Pillow': 'Pillow'
-    }
-
-    missing_packages = []
-    for package, install_name in required_packages.items():
-        try:
-            __import__(package)
-        except ImportError:
-            missing_packages.append((package, install_name))
-
-    if missing_packages:
-        for package, install_name in missing_packages:
-            try:
-                subprocess.check_call([sys.executable, "-m", "pip", "install", install_name])
-            except subprocess.CalledProcessError:
-                return False
-    return True
-
-
-if not install_dependencies():
-    sys.exit("Exiting due to missing dependencies")
-
+from typing import List, Dict
 
 class DirectoryManager:
-    """Core directory management system with undo functionality"""
     def __init__(self):
         self.file_categories = {
-            'Images': ['.jpg', '.jpeg', '.png', '.gif', '.bmp'],
-            'Documents': ['.pdf', '.doc', '.docx', '.txt'],
-            'Spreadsheets': ['.xls', '.xlsx', '.csv'],
-            'Presentations': ['.ppt', '.pptx'],
-            'Archives': ['.zip', '.rar', '.7z'],
-            'Audio': ['.mp3', '.wav'],
-            'Video': ['.mp4', '.avi'],
-            'Executables': ['.exe', '.msi'],
-            'Code': ['.py', '.js']
+            'Images': {'JPEG': ['.jpg', '.jpeg'], 'PNG': ['.png'], 'GIF': ['.gif'], 'BMP': ['.bmp'], 'Other': []},
+            'Documents': {'PDF': ['.pdf'], 'Word': ['.doc', '.docx'], 'Text': ['.txt'], 'Other': []},
+            'Spreadsheets': {'Excel': ['.xls', '.xlsx'], 'CSV': ['.csv'], 'Other': []},
+            'Presentations': {'PowerPoint': ['.ppt', '.pptx'], 'Other': []},
+            'Archives': {'ZIP': ['.zip'], 'RAR': ['.rar'], '7z': ['.7z'], 'Other': []},
+            'Audio': {'MP3': ['.mp3'], 'WAV': ['.wav'], 'Other': []},
+            'Video': {'MP4': ['.mp4'], 'AVI': ['.avi'], 'Other': []},
+            'Executables': {'Windows': ['.exe', '.msi'], 'Other': []},
+            'Code': {'Python': ['.py'], 'JavaScript': ['.js'], 'Other': []},
+            'Other': {'Other': []}
         }
+
         self.mime = magic.Magic(mime=True)
-        self.undo_stack = []
+        self.created_folders = []  # Track folders created by the manager
+        self.undo_stack = []  # Stack to track undo operations
+
+    def create_folder(self, folder_path: str) -> bool:
+        """Create folder if it doesn't exist and track it"""
+        if not os.path.exists(folder_path):
+            try:
+                os.makedirs(folder_path)
+                self.created_folders.append(folder_path)
+                return True
+            except Exception:
+                return False
+        return True
+
+    def move_file(self, source_path: str, destination_path: str) -> bool:
+        """Move file and create necessary folders"""
+        try:
+            if os.path.isdir(source_path):
+                if not self.create_folder(destination_path):
+                    return False
+            
+            shutil.move(source_path, destination_path)
+            self.undo_stack.append((destination_path, source_path))
+            return True
+        except Exception as e:
+            print(f"Move failed: {str(e)}")
+            return False
 
     def scan_directory(self, path: str) -> List[Dict]:
-        """Scan directory and return file metadata"""
+        """Scan directory and return file information"""
         if not os.path.isdir(path):
             raise ValueError("Invalid directory path")
-        
+
         files = []
         for root, _, filenames in os.walk(path):
             for filename in filenames:
@@ -75,71 +72,89 @@ class DirectoryManager:
                     print(f"Error scanning {file_path}: {str(e)}")
         return files
 
-    def classify_file(self, path: str) -> str:
-        """Classify file based on its extension"""
+    def classify_file(self, path: str) -> tuple:
+        """Classify file based on extension"""
         ext = os.path.splitext(path)[1].lower()
-        for category, extensions in self.file_categories.items():
-            if ext in extensions:
-                return category
-        return 'Other'
+        for main_category, subcategories in self.file_categories.items():
+            for subcategory, extensions in subcategories.items():
+                if ext in extensions:
+                    return (main_category, subcategory)
+        return ('Other', 'Other')
+
+    def organize_files(self, files: List[Dict], base_path: str) -> Dict:
+        """Organize files into categorized folders"""
+        results = {'moved': 0, 'errors': 0}
+
+        for file_info in files:
+            try:
+                main_category, subcategory = self.classify_file(file_info['path'])
+                main_dir = os.path.join(base_path, main_category)
+                sub_dir = os.path.join(main_dir, subcategory)
+                
+                if not (self.create_folder(main_dir) and self.create_folder(sub_dir)):
+                    results['errors'] += 1
+                    continue
+
+                new_path = os.path.join(sub_dir, os.path.basename(file_info['path']))
+                if self.move_file(file_info['path'], new_path):
+                    results['moved'] += 1
+                else:
+                    results['errors'] += 1
+                    
+            except Exception as e:
+                print(f"Error moving file: {str(e)}")
+                results['errors'] += 1
+
+        return results
 
     def find_duplicates(self, file_paths: List[str]) -> Dict[str, List[str]]:
-        """Find duplicate files using MD5 hashing"""
+        """Find duplicate files based on MD5 hash"""
         hashes = {}
         duplicates = {}
-        
-        for file_path in file_paths:
+
+        for path in file_paths:
             try:
-                file_hash = self._file_hash(file_path)
+                file_hash = self._file_hash(path)
                 if file_hash in hashes:
                     if file_hash not in duplicates:
                         duplicates[file_hash] = [hashes[file_hash]]
-                    duplicates[file_hash].append(file_path)
+                    duplicates[file_hash].append(path)
                 else:
-                    hashes[file_hash] = file_path
+                    hashes[file_hash] = path
             except Exception as e:
-                print(f"Error processing {file_path}: {str(e)}")
+                print(f"Duplicate check error: {str(e)}")
         return duplicates
 
-    def organize_files(self, files: List[Dict], base_path: str) -> Dict:
-        """Organize files into categorized directories with undo support"""
-        results = {'moved': 0, 'errors': 0}
-        for file_info in files:
-            try:
-                category = self.classify_file(file_info['path'])
-                target_dir = os.path.join(base_path, category)
-                os.makedirs(target_dir, exist_ok=True)
-                new_path = os.path.join(target_dir, os.path.basename(file_info['path']))
-                
-                shutil.move(file_info['path'], new_path)
-                self.undo_stack.append((new_path, file_info['path']))
-                results['moved'] += 1
-            except Exception as e:
-                print(f"Error moving {file_info['path']}: {str(e)}")
-                results['errors'] += 1
-        return results
+    def _file_hash(self, path: str) -> str:
+        """Calculate MD5 hash of a file"""
+        hash_md5 = hashlib.md5()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
 
     def undo_last_operation(self) -> bool:
         """Undo the last file move operation"""
         if not self.undo_stack:
             return False
-            
+
+        success = True
         for new_path, original_path in reversed(self.undo_stack):
             try:
                 shutil.move(new_path, original_path)
+                
+                # Clean up empty directories
+                folder = os.path.dirname(new_path)
+                if folder in self.created_folders and not os.listdir(folder):
+                    os.rmdir(folder)
+                    self.created_folders.remove(folder)
+                    
                 self.undo_stack.remove((new_path, original_path))
             except Exception as e:
-                print(f"Error undoing move: {str(e)}")
-                return False
-        return True
-
-    def _file_hash(self, path: str) -> str:
-        """Generate MD5 hash for file"""
-        hash_md5 = hashlib.md5()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
-                hash_md5.update(chunk)
-        return hash_md5.hexdigest()
+                print(f"Undo failed: {str(e)}")
+                success = False
+                
+        return success
 
 
 class DirectoryManagerGUI(tk.Tk):
@@ -152,7 +167,6 @@ class DirectoryManagerGUI(tk.Tk):
         
         self.manager = DirectoryManager()
         self.selected_path = ""
-        self.tooltips = {}
         
         self.style = ttk.Style()
         self.create_widgets()
@@ -275,13 +289,13 @@ class DirectoryManagerGUI(tk.Tk):
     def _update_scan_results(self, files, total_size):
         """Update the treeview with scan results"""
         for file_info in files:
-            file_type = self.manager.classify_file(file_info['path'])
+            main_category, subcategory = self.manager.classify_file(file_info['path'])
             self.tree.insert('', 'end', 
                 text=file_info['name'],
                 values=(
                     self.format_size(file_info['size']),
-                    file_type,
-                    ""  # Empty for new location
+                    f"{main_category}/{subcategory}",
+                    ""
                 ),
                 tags=(file_info['path'],)
             )
@@ -434,8 +448,7 @@ class DirectoryManagerGUI(tk.Tk):
         if not to_delete:
             return
             
-        if not messagebox.askyesno("Confirm", 
-                                 f"Delete {len(to_delete)} selected files?"):
+        if not messagebox.askyesno("Confirm", f"Delete {len(to_delete)} selected files?"):
             return
             
         deleted = 0
@@ -468,10 +481,10 @@ class DirectoryManagerGUI(tk.Tk):
         for item in self.tree.get_children():
             path = self.tree.item(item, 'tags')[0]
             filename = self.tree.item(item, 'text')
-            category = self.manager.classify_file(path)
+            main_category, subcategory = self.manager.classify_file(path)
             
             preview_text.insert(tk.END, 
-                f"{filename}\n  From: {os.path.dirname(path)}\n  To:   {category}\n\n")
+                f"{filename}\n  From: {os.path.dirname(path)}\n  To:   {main_category}/{subcategory}\n\n")
         
         preview_text.config(state=tk.DISABLED)
         
