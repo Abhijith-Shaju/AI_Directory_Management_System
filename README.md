@@ -1,5 +1,5 @@
 # *Smart Directory Management System*
-A Python-based AI-powered directory management tool that organizes files, detects duplicates, and provides undo functionality, all through an intuitive Tkinter-based GUI.
+A Python-based directory management tool that organizes files, detects duplicates, and provides undo functionality, all through an intuitive Tkinter-based GUI.
 
 *Features*  
 - **File Categorization:** Automatically categorizes files into folders such as "Images," "Documents," "Videos," and more.  
